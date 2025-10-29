@@ -1,0 +1,12 @@
+/* src/styles.css */
+html,
+body,
+#app {
+  height: 100%;
+}
+body {
+  margin: 0;
+}
+#app {
+  padding: 0;
+}
