@@ -230,7 +230,7 @@ function buildCatMesh() {
       dummyObject.position.set(cell.x, cell.y, zPosition);
       dummyObject.rotation.set(0, 0, 0);
       dummyObject.updateMatrix();
-      catMesh!.setMatrixAt(instanceIndex, dummyObject.matrix);
+      catMesh.setMatrixAt(instanceIndex, dummyObject.matrix);
     }
   });
 
