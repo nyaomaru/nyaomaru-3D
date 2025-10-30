@@ -259,8 +259,6 @@ onMounted(() => {
     () => {
       if (backgroundTexture) {
         applyBackgroundMask(backgroundTexture);
-      }
-      if (backgroundTexture) {
         backgroundTexture.colorSpace = THREE.SRGBColorSpace;
       }
       createBackgroundPlane();
