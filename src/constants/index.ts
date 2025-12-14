@@ -6,4 +6,4 @@ export * from './avatar';
 export * from './arms';
 export * from './legs';
 export * from './pattern';
-
+export * from './environment';
