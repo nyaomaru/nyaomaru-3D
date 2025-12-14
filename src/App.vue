@@ -1,7 +1,7 @@
 <template>
-  <ThreeScene />
-</template>
+  <NyaomaruWorld />
+  </template>
 
 <script setup lang="ts">
-import ThreeScene from './components/ThreeScene.vue';
+import NyaomaruWorld from './components/NyaomaruWorld.vue';
 </script>
