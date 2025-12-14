@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { Collider } from '../types'
+import * as C from '../constants'
 
 export function useEnvironment(
   scene: THREE.Scene,
@@ -8,16 +9,16 @@ export function useEnvironment(
   const colliders: Collider[] = []
 
   // Sky and light
-  scene.background = new THREE.Color(0x87ceeb)
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x556b2f, 0.8)
-  const dir = new THREE.DirectionalLight(0xffffff, 0.8)
-  dir.position.set(5, 10, 5)
+  scene.background = new THREE.Color(C.SKY_COLOR)
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x556b2f, C.HEMI_LIGHT_INTENSITY)
+  const dir = new THREE.DirectionalLight(0xffffff, C.DIR_LIGHT_INTENSITY)
+  dir.position.set(C.DIR_LIGHT_POSITION.x, C.DIR_LIGHT_POSITION.y, C.DIR_LIGHT_POSITION.z)
   scene.add(hemi, dir)
 
   // Ground
-  const groundGeo = new THREE.PlaneGeometry(1000, 1000)
+  const groundGeo = new THREE.PlaneGeometry(C.GROUND_SIZE, C.GROUND_SIZE)
   // Ground material: light sandy tan
-  const groundMat = new THREE.MeshStandardMaterial({ color: 0xD2B48C, roughness: 0.92, metalness: 0.0 })
+  const groundMat = new THREE.MeshStandardMaterial({ color: C.GROUND_COLOR_SAND, roughness: C.GROUND_ROUGHNESS, metalness: C.GROUND_METALNESS })
   const ground = new THREE.Mesh(groundGeo, groundMat)
   ground.rotation.x = -Math.PI / 2
   ground.position.y = 0
@@ -27,11 +28,11 @@ export function useEnvironment(
 
   // Mountains (simple cones placed around)
   const coneGeo = new THREE.ConeGeometry(3, 6, 6)
-  const coneMat = new THREE.MeshStandardMaterial({ color: 0x6b8e23, roughness: 0.9 })
-  for (let i = 0; i < 40; i += 1) {
-    const r = 40 + Math.random() * 120
+  const coneMat = new THREE.MeshStandardMaterial({ color: C.MOUNTAIN_COLOR, roughness: 0.9 })
+  for (let i = 0; i < C.MOUNTAIN_COUNT; i += 1) {
+    const r = C.MOUNTAIN_BASE_RADIUS_MIN + Math.random() * C.MOUNTAIN_BASE_RADIUS_RANGE
     const a = Math.random() * Math.PI * 2
-    const scale = 0.8 + Math.random() * 2.5
+    const scale = C.MOUNTAIN_SCALE_MIN + Math.random() * C.MOUNTAIN_SCALE_RANGE
     const cone = new THREE.Mesh(coneGeo, coneMat)
     cone.position.set(Math.cos(a) * r, 3 * scale, Math.sin(a) * r)
     cone.scale.setScalar(scale)

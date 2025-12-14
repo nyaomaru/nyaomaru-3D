@@ -17,7 +17,7 @@ export function useAvatar(
   const baseY = yOffset + 0.02
 
   const boxGeo = new THREE.BoxGeometry(CELL, CELL, CELL)
-  const boxMat = new THREE.MeshStandardMaterial({ color: C.AVATAR_COLOR, roughness: 0.45, metalness: 0.05 })
+  const boxMat = new THREE.MeshStandardMaterial({ color: C.AVATAR_COLOR, roughness: C.AVATAR_MAT_ROUGHNESS, metalness: C.AVATAR_MAT_METALNESS })
 
   const bodyCells: BodyCell[] = []
   const leftArmCells: ArmCell[] = []
@@ -228,4 +228,3 @@ export function useAvatar(
 
   return { armLeft, armRight, leftFoot, rightFoot, lookAt }
 }
-
