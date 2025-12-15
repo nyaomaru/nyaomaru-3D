@@ -13,7 +13,7 @@ export function useAvatar(
   const SPACING = C.AVATAR_SPACING;
 
   const rows = C.LOGO_PATTERN.length;
-  const cols = C.LOGO_PATTERN[0].length;
+  const cols = C.LOGO_PATTERN[0]?.length ?? 0;
   const xOffset = ((cols - 1) * CELL) / 2;
   const yOffset = ((rows - 1) * CELL) / 2;
   const baseY = yOffset + 0.02;
@@ -48,7 +48,7 @@ export function useAvatar(
   const armThresholdMax = Math.floor(cols * C.ARM_THRESHOLD_MAX_RATIO);
 
   for (let rowIndex = 0; rowIndex < rows; rowIndex++) {
-    const rowString = C.LOGO_PATTERN[rowIndex];
+    const rowString = C.LOGO_PATTERN[rowIndex] ?? '';
     for (let colIndex = 0; colIndex < rowString.length; colIndex++) {
       if (rowString[colIndex] === ' ') continue;
       const posX = colIndex * CELL - xOffset;
@@ -141,7 +141,7 @@ export function useAvatar(
     finalLeft = [];
     finalRight = [];
     for (let rowIndex = armBandTop; rowIndex <= armBandBottom; rowIndex += 1) {
-      const rowString = C.LOGO_PATTERN[rowIndex];
+      const rowString = C.LOGO_PATTERN[rowIndex] ?? '';
       if (!rowString) continue;
       let firstCol = -1;
       let lastCol = -1;
