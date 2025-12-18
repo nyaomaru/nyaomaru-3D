@@ -28,6 +28,9 @@ export function useAvatar(
   const bodyCells: BodyCell[] = [];
   const leftArmCells: ArmCell[] = [];
   const rightArmCells: ArmCell[] = [];
+  // 明示的に X で指定された“手”セルを集める
+  const leftHandXCells: ArmCell[] = [];
+  const rightHandXCells: ArmCell[] = [];
   const leftFootCells: Array<{
     x: number;
     y: number;
@@ -44,24 +47,67 @@ export function useAvatar(
   const centerCol = (cols - 1) / 2;
   const armBandTop = Math.floor(rows * C.ARM_BAND_TOP_RATIO);
   const armBandBottom = Math.floor(rows * C.ARM_BAND_BOTTOM_RATIO);
-  const armThresholdMin = Math.floor(cols * C.ARM_THRESHOLD_MIN_RATIO);
-  const armThresholdMax = Math.floor(cols * C.ARM_THRESHOLD_MAX_RATIO);
+  // X 方向の判定を各行の外縁からの距離で行うため、しきい値は行幅ベースで後で使う
+  const edgeMinRatio = C.ARM_THRESHOLD_MIN_RATIO;
+  const edgeMaxRatio = C.ARM_THRESHOLD_MAX_RATIO;
+
+  // 各行の塗りつぶし領域の左端/右端（外縁）を先に求める
+  const rowEdges: Array<{ firstCol: number; lastCol: number; width: number } | null> = [];
+  const hasHandX = C.LOGO_PATTERN.some((r) => r?.includes('X'));
+
+  for (let rowIndex = 0; rowIndex < rows; rowIndex++) {
+    const rowString = C.LOGO_PATTERN[rowIndex] ?? '';
+    let firstCol = -1;
+    let lastCol = -1;
+    for (let colIndex = 0; colIndex < rowString.length; colIndex++) {
+      if (rowString[colIndex] !== ' ') {
+        if (firstCol === -1) firstCol = colIndex;
+        lastCol = colIndex;
+      }
+    }
+    if (firstCol === -1 || lastCol === -1) {
+      rowEdges.push(null);
+    } else {
+      const width = lastCol - firstCol + 1;
+      rowEdges.push({ firstCol, lastCol, width });
+    }
+  }
 
   for (let rowIndex = 0; rowIndex < rows; rowIndex++) {
     const rowString = C.LOGO_PATTERN[rowIndex] ?? '';
     for (let colIndex = 0; colIndex < rowString.length; colIndex++) {
-      if (rowString[colIndex] === ' ') continue;
+      const ch = rowString[colIndex] ?? ' ';
+      if (ch === ' ') continue;
       const posX = colIndex * CELL - xOffset;
       const posY = (rows - 1 - rowIndex) * CELL - yOffset + baseY;
-      const colDistance = Math.abs(colIndex - centerCol);
-      const colDistanceInt = Math.floor(colDistance + 1e-6);
+      // 各行の外縁からの距離を用いる（X 方向の精度向上）
+      const edges = rowEdges[rowIndex];
       const legBandTop = Math.floor(rows * C.LEG_BAND_TOP_RATIO);
       const inLegBand = rowIndex >= legBandTop;
-      const legCenterThreshold = Math.floor(
-        cols * C.LEG_THRESHOLD_CENTER_RATIO
-      );
-      const inLegCols = Math.abs(colIndex - centerCol) <= legCenterThreshold;
-      if (C.ENABLE_LEG_SWING && inLegBand && inLegCols) {
+      const legCenterThreshold = Math.floor(cols * C.LEG_THRESHOLD_CENTER_RATIO);
+      const colDistanceCenter = Math.abs(colIndex - centerCol);
+      const inLegCols = colDistanceCenter <= legCenterThreshold;
+      if (ch === 'X') {
+        // パターン上の X は“手”として扱い、ボディには含めない
+        if (colIndex < centerCol)
+          leftHandXCells.push({
+            x: posX,
+            y: posY,
+            col: colIndex,
+            colDelta: 0,
+            colDeltaInt: 0,
+            row: rowIndex,
+          });
+        else
+          rightHandXCells.push({
+            x: posX,
+            y: posY,
+            col: colIndex,
+            colDelta: 0,
+            colDeltaInt: 0,
+            row: rowIndex,
+          });
+      } else if (C.ENABLE_LEG_SWING && inLegBand && inLegCols) {
         if (colIndex < centerCol)
           leftFootCells.push({
             x: posX,
@@ -76,30 +122,34 @@ export function useAvatar(
             row: rowIndex,
             col: colIndex,
           });
-      } else if (
-        rowIndex >= armBandTop &&
-        rowIndex <= armBandBottom &&
-        colDistance >= armThresholdMin &&
-        colDistance <= armThresholdMax
-      ) {
-        if (colIndex < centerCol)
+      } else if (!hasHandX && rowIndex >= armBandTop && rowIndex <= armBandBottom && edges) {
+        // 行幅に応じた外縁バンド（端からの距離）で腕を抽出
+        const { firstCol, lastCol, width } = edges;
+        const minFromEdge = Math.floor(width * edgeMinRatio);
+        const maxFromEdge = Math.floor(width * edgeMaxRatio);
+        const leftDist = colIndex - firstCol; // 左端からの距離
+        const rightDist = lastCol - colIndex; // 右端からの距離
+        if (leftDist >= minFromEdge && leftDist <= maxFromEdge) {
           leftArmCells.push({
             x: posX,
             y: posY,
             col: colIndex,
-            colDelta: colDistance,
-            colDeltaInt: colDistanceInt,
+            colDelta: leftDist,
+            colDeltaInt: Math.floor(leftDist + 1e-6),
             row: rowIndex,
           });
-        else
+        } else if (rightDist >= minFromEdge && rightDist <= maxFromEdge) {
           rightArmCells.push({
             x: posX,
             y: posY,
             col: colIndex,
-            colDelta: colDistance,
-            colDeltaInt: colDistanceInt,
+            colDelta: rightDist,
+            colDeltaInt: Math.floor(rightDist + 1e-6),
             row: rowIndex,
           });
+        } else {
+          bodyCells.push({ x: posX, y: posY, row: rowIndex, col: colIndex });
+        }
       } else {
         bodyCells.push({ x: posX, y: posY, row: rowIndex, col: colIndex });
       }
@@ -134,10 +184,8 @@ export function useAvatar(
   );
   const needFallback =
     finalLeft.length < C.ARM_MIN_CELLS_FOR_SWING ||
-    finalRight.length < C.ARM_MIN_CELLS_FOR_SWING ||
-    leftEdge < armThresholdMin + C.ARM_MIN_EDGE_DELTA_MARGIN ||
-    rightEdge < armThresholdMin + C.ARM_MIN_EDGE_DELTA_MARGIN;
-  if (needFallback) {
+    finalRight.length < C.ARM_MIN_CELLS_FOR_SWING;
+  if (!hasHandX && needFallback) {
     finalLeft = [];
     finalRight = [];
     for (let rowIndex = armBandTop; rowIndex <= armBandBottom; rowIndex += 1) {
@@ -181,18 +229,35 @@ export function useAvatar(
     }
   }
 
-  // body mesh excluding arms/feet if enabled
+  // 手先だけに限定（外縁かつ帯域下側を優先して最大 N 個）
+  if (!hasHandX && C.ARM_SELECT_HAND_ONLY) {
+    const pickHandCells = (cells: ArmCell[]) => {
+      if (cells.length <= C.ARM_HAND_CELLS_PER_SIDE) return cells;
+      // 行の下側（row が大きい）優先、次いで外縁に近い（colDelta が小さい）
+      const sorted = [...cells].sort((a, b) => {
+        if (a.row !== b.row) return b.row - a.row;
+        return a.colDelta - b.colDelta;
+      });
+      return sorted.slice(0, C.ARM_HAND_CELLS_PER_SIDE);
+    };
+    finalLeft = pickHandCells(finalLeft);
+    finalRight = pickHandCells(finalRight);
+  }
+
+  // X 指定の手があればそれを最優先で採用
+  if (hasHandX) {
+    finalLeft = leftHandXCells;
+    finalRight = rightHandXCells;
+  }
+
+  // body mesh excluding arms/feet if enabled（手の X は最初から body に入れていない）
   const key = (r: number, c: number) => `${r}:${c}`;
   const armCellsSet = new Set<string>();
-  if (C.ENABLE_ARM_SWING) {
-    for (const p of finalLeft) armCellsSet.add(key(p.row, p.col));
-    for (const p of finalRight) armCellsSet.add(key(p.row, p.col));
-  }
+  for (const p of finalLeft) armCellsSet.add(key(p.row, p.col));
+  for (const p of finalRight) armCellsSet.add(key(p.row, p.col));
   const footCellsSet = new Set<string>();
-  if (C.ENABLE_LEG_SWING) {
-    for (const p of leftFootCells) footCellsSet.add(key(p.row, p.col));
-    for (const p of rightFootCells) footCellsSet.add(key(p.row, p.col));
-  }
+  for (const p of leftFootCells) footCellsSet.add(key(p.row, p.col));
+  for (const p of rightFootCells) footCellsSet.add(key(p.row, p.col));
   const bodyFiltered = bodyCells.filter(
     (b) =>
       !armCellsSet.has(key(b.row, b.col)) &&
@@ -255,8 +320,8 @@ export function useAvatar(
     return group;
   }
 
-  const armLeft = C.ENABLE_ARM_SWING ? buildArmGroup(finalLeft, -1) : null;
-  const armRight = C.ENABLE_ARM_SWING ? buildArmGroup(finalRight, 1) : null;
+  const armLeft = buildArmGroup(finalLeft, -1);
+  const armRight = buildArmGroup(finalRight, 1);
 
   function buildFootGroup(cells: Array<{ x: number; y: number }>) {
     if (cells.length === 0) return null;
@@ -290,8 +355,8 @@ export function useAvatar(
     group.add(mesh);
     return group;
   }
-  const leftFoot = C.ENABLE_LEG_SWING ? buildFootGroup(leftFootCells) : null;
-  const rightFoot = C.ENABLE_LEG_SWING ? buildFootGroup(rightFootCells) : null;
+  const leftFoot = buildFootGroup(leftFootCells);
+  const rightFoot = buildFootGroup(rightFootCells);
 
   // lookAt offset roughly torso height
   const box = new THREE.Box3().setFromObject(player);

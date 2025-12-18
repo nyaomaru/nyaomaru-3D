@@ -23,6 +23,12 @@ let armRightGroup: THREE.Group | null = null
 let leftFootGroup: THREE.Group | null = null
 let rightFootGroup: THREE.Group | null = null
 
+// Punch state
+let isPunching = false
+let punchTimer = 0
+let punchCooldown = 0
+let punchHand: 'left' | 'right' = 'right'
+
 // Mouse look
 let pitch = C.INITIAL_PITCH
 let cameraYaw = 0
@@ -123,8 +129,33 @@ function updatePlayer(dt: number) {
     player.position.z *= scale
   }
 
+  // Punch animation (overrides arm swing if active)
+  if (isPunching) {
+    punchTimer += dt
+    const t = Math.min(1, punchTimer / C.PUNCH_DURATION)
+    const phase = t < 0.5 ? (t / 0.5) : (1 - (t - 0.5) / 0.5)
+    const angle = phase * C.PUNCH_ANGLE
+    if (punchHand === 'left' && armLeftGroup) {
+      // 左手も前方へ突き出す向きで統一
+      armLeftGroup.rotation.x = -angle
+      armLeftGroup.rotation.z = 0
+    }
+    if (punchHand === 'right' && armRightGroup) {
+      armRightGroup.rotation.x = -angle
+      armRightGroup.rotation.z = 0
+    }
+    if (t >= 1) {
+      isPunching = false
+      punchTimer = 0
+      punchCooldown = C.PUNCH_COOLDOWN
+      punchHand = punchHand === 'left' ? 'right' : 'left'
+    }
+  } else {
+    if (punchCooldown > 0) punchCooldown = Math.max(0, punchCooldown - dt)
+  }
+
   // Arm swing (optional)
-  if (C.ENABLE_ARM_SWING) {
+  if (!isPunching && C.ENABLE_ARM_SWING) {
     const moving = Math.abs(forward) > 0.01
     const t = performance.now() * C.ARM_SWING_SPEED * (keys.has('Shift') ? C.ARM_SWING_DASH_MULT : 1)
     const amp = moving ? C.ARM_SWING_AMP : 0.0
@@ -139,7 +170,7 @@ function updatePlayer(dt: number) {
     }
   }
 
-  // Feet swing (optional)
+  // Feet swing (optional) — keep moving during punch
   if (C.ENABLE_LEG_SWING) {
     const moving = Math.abs(forward) > 0.01
     const t = performance.now() * C.LEG_SWING_SPEED
@@ -181,6 +212,15 @@ function animate() {
 function onKeyDown(e: KeyboardEvent) {
   if (e.key === ' ' || e.key === 'Space') e.preventDefault()
   keys.add(e.key)
+  // Trigger punch with 'z'
+  if (e.key.toLowerCase() === 'z') {
+    if (!isPunching && punchCooldown === 0) {
+      if (armLeftGroup || armRightGroup) {
+        isPunching = true
+        punchTimer = 0
+      }
+    }
+  }
 }
 function onKeyUp(e: KeyboardEvent) {
   keys.delete(e.key)
@@ -258,4 +298,3 @@ onBeforeUnmount(() => {
 <template>
   <div ref="container" style="width: 100%; height: 100vh; overflow: hidden"></div>
 </template>
-
