@@ -2,6 +2,104 @@ import * as THREE from 'three';
 import * as C from '../constants';
 import type { ArmCell, BodyCell } from '../types';
 
+// Row fill edges information (first/last non-space columns and row width)
+type RowEdge = { firstCol: number; lastCol: number; width: number };
+
+function computeRowEdges(pattern: string[]): Array<RowEdge | null> {
+  const edges: Array<RowEdge | null> = [];
+  for (let r = 0; r < pattern.length; r++) {
+    const row = pattern[r] ?? '';
+    let first = -1;
+    let last = -1;
+    for (let c = 0; c < row.length; c++) {
+      if (row[c] !== ' ') {
+        if (first === -1) first = c;
+        last = c;
+      }
+    }
+    if (first === -1 || last === -1) edges.push(null);
+    else edges.push({ firstCol: first, lastCol: last, width: last - first + 1 });
+  }
+  return edges;
+}
+
+function buildBodyMesh(
+  player: THREE.Group,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  cells: BodyCell[],
+  depth: number,
+  spacing: number
+) {
+  const dummy = new THREE.Object3D();
+  const mesh = new THREE.InstancedMesh(geometry, material, cells.length * depth);
+  let idx = 0;
+  for (const cell of cells) {
+    for (let k = 0; k < depth; k += 1) {
+      const z = (k - (depth - 1) / 2) * spacing;
+      dummy.position.set(cell.x, cell.y, z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(idx++, dummy.matrix);
+    }
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  player.clear();
+  player.add(mesh);
+  return mesh;
+}
+
+function buildLimbGroup(
+  player: THREE.Group,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  cells: ArmCell[],
+  depth: number,
+  spacing: number,
+  cellSize: number,
+  sideSign: -1 | 1
+) {
+  if (cells.length === 0) return null;
+  let pivotX = 0;
+  let pivotY = 0;
+  for (const p of cells) {
+    pivotX += p.x;
+    pivotY += p.y;
+  }
+  pivotX /= cells.length;
+  pivotY /= cells.length;
+  // Move pivot slightly outward to look like a shoulder joint
+  pivotX -= sideSign * cellSize * 1.0;
+
+  const group = new THREE.Group();
+  group.position.set(pivotX, pivotY, 0);
+  const dummy = new THREE.Object3D();
+  const mesh = new THREE.InstancedMesh(geometry, material, cells.length * depth);
+  let idx = 0;
+  for (const cell of cells) {
+    for (let k = 0; k < depth; k += 1) {
+      const z = (k - (depth - 1) / 2) * spacing;
+      dummy.position.set(cell.x - pivotX, cell.y - pivotY, z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(idx++, dummy.matrix);
+    }
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  player.add(group);
+  group.add(mesh);
+  return group;
+}
+
+function selectHandOnly(cells: ArmCell[], perSide: number): ArmCell[] {
+  if (cells.length <= perSide) return cells;
+  const sorted = [...cells].sort((a, b) => {
+    if (a.row !== b.row) return b.row - a.row; // prefer lower rows (hands)
+    return a.colDelta - b.colDelta; // prefer closer to edge
+  });
+  return sorted.slice(0, perSide);
+}
+
 export function useAvatar(
   player: THREE.Group,
   addToDispose: (
@@ -14,9 +112,9 @@ export function useAvatar(
 
   const rows = C.LOGO_PATTERN.length;
   const cols = C.LOGO_PATTERN[0]?.length ?? 0;
-  const xOffset = ((cols - 1) * CELL) / 2;
-  const yOffset = ((rows - 1) * CELL) / 2;
-  const baseY = yOffset + 0.02;
+  const halfWidthX = ((cols - 1) * CELL) / 2;
+  const halfHeightY = ((rows - 1) * CELL) / 2;
+  const baseY = halfHeightY + 0.02;
 
   const voxelGeometry = new THREE.BoxGeometry(CELL, CELL, CELL);
   const voxelMaterial = new THREE.MeshStandardMaterial({
@@ -51,40 +149,24 @@ export function useAvatar(
   const edgeMinRatio = C.ARM_THRESHOLD_MIN_RATIO;
   const edgeMaxRatio = C.ARM_THRESHOLD_MAX_RATIO;
 
-  // 各行の塗りつぶし領域の左端/右端（外縁）を先に求める
-  const rowEdges: Array<{ firstCol: number; lastCol: number; width: number } | null> = [];
+  // Precompute row edges and hand markers
+  const rowEdges = computeRowEdges(C.LOGO_PATTERN);
   const hasHandX = C.LOGO_PATTERN.some((r) => r?.includes('X'));
-
-  for (let rowIndex = 0; rowIndex < rows; rowIndex++) {
-    const rowString = C.LOGO_PATTERN[rowIndex] ?? '';
-    let firstCol = -1;
-    let lastCol = -1;
-    for (let colIndex = 0; colIndex < rowString.length; colIndex++) {
-      if (rowString[colIndex] !== ' ') {
-        if (firstCol === -1) firstCol = colIndex;
-        lastCol = colIndex;
-      }
-    }
-    if (firstCol === -1 || lastCol === -1) {
-      rowEdges.push(null);
-    } else {
-      const width = lastCol - firstCol + 1;
-      rowEdges.push({ firstCol, lastCol, width });
-    }
-  }
 
   for (let rowIndex = 0; rowIndex < rows; rowIndex++) {
     const rowString = C.LOGO_PATTERN[rowIndex] ?? '';
     for (let colIndex = 0; colIndex < rowString.length; colIndex++) {
       const ch = rowString[colIndex] ?? ' ';
       if (ch === ' ') continue;
-      const posX = colIndex * CELL - xOffset;
-      const posY = (rows - 1 - rowIndex) * CELL - yOffset + baseY;
+      const posX = colIndex * CELL - halfWidthX;
+      const posY = (rows - 1 - rowIndex) * CELL - halfHeightY + baseY;
       // 各行の外縁からの距離を用いる（X 方向の精度向上）
       const edges = rowEdges[rowIndex];
       const legBandTop = Math.floor(rows * C.LEG_BAND_TOP_RATIO);
       const inLegBand = rowIndex >= legBandTop;
-      const legCenterThreshold = Math.floor(cols * C.LEG_THRESHOLD_CENTER_RATIO);
+      const legCenterThreshold = Math.floor(
+        cols * C.LEG_THRESHOLD_CENTER_RATIO
+      );
       const colDistanceCenter = Math.abs(colIndex - centerCol);
       const inLegCols = colDistanceCenter <= legCenterThreshold;
       if (ch === 'X') {
@@ -122,7 +204,12 @@ export function useAvatar(
             row: rowIndex,
             col: colIndex,
           });
-      } else if (!hasHandX && rowIndex >= armBandTop && rowIndex <= armBandBottom && edges) {
+      } else if (
+        !hasHandX &&
+        rowIndex >= armBandTop &&
+        rowIndex <= armBandBottom &&
+        edges
+      ) {
         // 行幅に応じた外縁バンド（端からの距離）で腕を抽出
         const { firstCol, lastCol, width } = edges;
         const minFromEdge = Math.floor(width * edgeMinRatio);
@@ -177,11 +264,6 @@ export function useAvatar(
   // fallback outer columns
   let finalLeft = leftArmTrimmed;
   let finalRight = rightArmTrimmed;
-  const leftEdge = leftArmTrimmed.reduce((m, p) => Math.max(m, p.colDelta), 0);
-  const rightEdge = rightArmTrimmed.reduce(
-    (m, p) => Math.max(m, p.colDelta),
-    0
-  );
   const needFallback =
     finalLeft.length < C.ARM_MIN_CELLS_FOR_SWING ||
     finalRight.length < C.ARM_MIN_CELLS_FOR_SWING;
@@ -203,8 +285,8 @@ export function useAvatar(
       for (let width = 0; width < C.ARM_FALLBACK_WIDTH_COLS; width += 1) {
         const leftCol = firstCol + width;
         const rightCol = lastCol - width;
-        let posX = leftCol * CELL - xOffset;
-        let posY = (rows - 1 - rowIndex) * CELL - yOffset + baseY;
+        let posX = leftCol * CELL - halfWidthX;
+        let posY = (rows - 1 - rowIndex) * CELL - halfHeightY + baseY;
         let colDistance = Math.abs(leftCol - centerCol);
         finalLeft.push({
           x: posX,
@@ -214,8 +296,8 @@ export function useAvatar(
           colDeltaInt: Math.floor(colDistance + 1e-6),
           row: rowIndex,
         });
-        posX = rightCol * CELL - xOffset;
-        posY = (rows - 1 - rowIndex) * CELL - yOffset + baseY;
+        posX = rightCol * CELL - halfWidthX;
+        posY = (rows - 1 - rowIndex) * CELL - halfHeightY + baseY;
         colDistance = Math.abs(rightCol - centerCol);
         finalRight.push({
           x: posX,
@@ -259,74 +341,35 @@ export function useAvatar(
   for (const p of leftFootCells) footCellsSet.add(key(p.row, p.col));
   for (const p of rightFootCells) footCellsSet.add(key(p.row, p.col));
   const bodyFiltered = bodyCells.filter(
-    (b) =>
-      !armCellsSet.has(key(b.row, b.col)) &&
-      !footCellsSet.has(key(b.row, b.col))
+    (b) => !armCellsSet.has(key(b.row, b.col)) && !footCellsSet.has(key(b.row, b.col))
   );
-  const dummy = new THREE.Object3D();
-  const bodyMesh = new THREE.InstancedMesh(
+  buildBodyMesh(player, voxelGeometry, voxelMaterial, bodyFiltered, DEPTH, SPACING);
+
+  const armLeft = buildLimbGroup(
+    player,
     voxelGeometry,
     voxelMaterial,
-    bodyFiltered.length * DEPTH
+    finalLeft,
+    DEPTH,
+    SPACING,
+    CELL,
+    -1
   );
-  let idxBody = 0;
-  for (const cell of bodyFiltered) {
-    for (let k = 0; k < DEPTH; k += 1) {
-      const z = (k - (DEPTH - 1) / 2) * SPACING;
-      dummy.position.set(cell.x, cell.y, z);
-      dummy.rotation.set(0, 0, 0);
-      dummy.updateMatrix();
-      bodyMesh.setMatrixAt(idxBody++, dummy.matrix);
-    }
-  }
-  bodyMesh.instanceMatrix.needsUpdate = true;
-  player.clear();
-  player.add(bodyMesh);
+  const armRight = buildLimbGroup(
+    player,
+    voxelGeometry,
+    voxelMaterial,
+    finalRight,
+    DEPTH,
+    SPACING,
+    CELL,
+    1
+  );
 
-  function buildArmGroup(cells: ArmCell[], sign: -1 | 1) {
+  function buildFootGroupMesh(cells: Array<{ x: number; y: number }>) {
     if (cells.length === 0) return null;
-    let pivotX = 0,
-      pivotY = 0,
-      count = 0;
-    for (const p of cells) {
-      pivotX += p.x;
-      pivotY += p.y;
-      count += 1;
-    }
-    pivotX /= count;
-    pivotY /= count;
-    pivotX -= sign * CELL * 1.0;
-
-    const group = new THREE.Group();
-    group.position.set(pivotX, pivotY, 0);
-    const mesh = new THREE.InstancedMesh(
-      voxelGeometry,
-      voxelMaterial,
-      cells.length * DEPTH
-    );
-    let idx = 0;
-    for (const cell of cells) {
-      for (let k = 0; k < DEPTH; k += 1) {
-        const z = (k - (DEPTH - 1) / 2) * SPACING;
-        dummy.position.set(cell.x - pivotX, cell.y - pivotY, z);
-        dummy.rotation.set(0, 0, 0);
-        dummy.updateMatrix();
-        mesh.setMatrixAt(idx++, dummy.matrix);
-      }
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-    player.add(group);
-    group.add(mesh);
-    return group;
-  }
-
-  const armLeft = buildArmGroup(finalLeft, -1);
-  const armRight = buildArmGroup(finalRight, 1);
-
-  function buildFootGroup(cells: Array<{ x: number; y: number }>) {
-    if (cells.length === 0) return null;
-    let pivotX = 0,
-      pivotY = 0;
+    let pivotX = 0;
+    let pivotY = 0;
     for (const f of cells) {
       pivotX += f.x;
       pivotY += f.y;
@@ -335,6 +378,7 @@ export function useAvatar(
     pivotY = Math.max(pivotY / cells.length, baseY + CELL * 1.2);
     const group = new THREE.Group();
     group.position.set(pivotX, pivotY, 0);
+    const dummy = new THREE.Object3D();
     const mesh = new THREE.InstancedMesh(
       voxelGeometry,
       voxelMaterial,
@@ -355,8 +399,8 @@ export function useAvatar(
     group.add(mesh);
     return group;
   }
-  const leftFoot = buildFootGroup(leftFootCells);
-  const rightFoot = buildFootGroup(rightFootCells);
+  const leftFoot = buildFootGroupMesh(leftFootCells);
+  const rightFoot = buildFootGroupMesh(rightFootCells);
 
   // lookAt offset roughly torso height
   const box = new THREE.Box3().setFromObject(player);
