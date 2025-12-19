@@ -119,7 +119,7 @@ export function useAvatar(
   const bodyCells: BodyCell[] = [];
   const leftArmCells: ArmCell[] = [];
   const rightArmCells: ArmCell[] = [];
-  // 明示的に X で指定された“手”セルを集める
+  // Collect explicit hands marked by 'X' characters in the pattern
   const leftHandXCells: ArmCell[] = [];
   const rightHandXCells: ArmCell[] = [];
   const leftFootCells: Array<{
@@ -138,7 +138,7 @@ export function useAvatar(
   const centerCol = (cols - 1) / 2;
   const armBandTop = Math.floor(rows * C.ARM_BAND_TOP_RATIO);
   const armBandBottom = Math.floor(rows * C.ARM_BAND_BOTTOM_RATIO);
-  // X 方向の判定を各行の外縁からの距離で行うため、しきい値は行幅ベースで後で使う
+  // Use per-row edge distance (based on row width) as threshold in X direction
   const edgeMinRatio = C.ARM_THRESHOLD_MIN_RATIO;
   const edgeMaxRatio = C.ARM_THRESHOLD_MAX_RATIO;
 
@@ -153,7 +153,7 @@ export function useAvatar(
       if (ch === ' ') continue;
       const posX = colIndex * CELL - halfWidthX;
       const posY = (rows - 1 - rowIndex) * CELL - halfHeightY + baseY;
-      // 各行の外縁からの距離を用いる（X 方向の精度向上）
+      // Use each row's outer-edge distances (better X-direction precision)
       const edges = rowEdges[rowIndex];
       const legBandTop = Math.floor(rows * C.LEG_BAND_TOP_RATIO);
       const inLegBand = rowIndex >= legBandTop;
@@ -163,7 +163,7 @@ export function useAvatar(
       const colDistanceCenter = Math.abs(colIndex - centerCol);
       const inLegCols = colDistanceCenter <= legCenterThreshold;
       if (ch === 'X') {
-        // パターン上の X は“手”として扱い、ボディには含めない
+        // Treat 'X' in pattern as hands; exclude from body
         if (colIndex < centerCol)
           leftHandXCells.push({
             x: posX,
@@ -203,12 +203,12 @@ export function useAvatar(
         rowIndex <= armBandBottom &&
         edges
       ) {
-        // 行幅に応じた外縁バンド（端からの距離）で腕を抽出
+        // Extract arms using an outer-edge band per-row (distance from edges)
         const { firstCol, lastCol, width } = edges;
         const minFromEdge = Math.floor(width * edgeMinRatio);
         const maxFromEdge = Math.floor(width * edgeMaxRatio);
-        const leftDist = colIndex - firstCol; // 左端からの距離
-        const rightDist = lastCol - colIndex; // 右端からの距離
+        const leftDist = colIndex - firstCol; // distance from left edge
+        const rightDist = lastCol - colIndex; // distance from right edge
         if (leftDist >= minFromEdge && leftDist <= maxFromEdge) {
           leftArmCells.push({
             x: posX,
@@ -304,11 +304,11 @@ export function useAvatar(
     }
   }
 
-  // 手先だけに限定（外縁かつ帯域下側を優先して最大 N 個）
+  // Restrict to hands only (prefer outer + lower-band rows, up to N cells)
   if (!hasHandX && C.ARM_SELECT_HAND_ONLY) {
     const pickHandCells = (cells: ArmCell[]) => {
       if (cells.length <= C.ARM_HAND_CELLS_PER_SIDE) return cells;
-      // 行の下側（row が大きい）優先、次いで外縁に近い（colDelta が小さい）
+      // Prefer lower rows (larger row index), then closer to edge (smaller colDelta)
       const sorted = [...cells].sort((a, b) => {
         if (a.row !== b.row) return b.row - a.row;
         return a.colDelta - b.colDelta;
@@ -319,13 +319,13 @@ export function useAvatar(
     finalRight = pickHandCells(finalRight);
   }
 
-  // X 指定の手があればそれを最優先で採用
+  // If hands are marked with 'X', prefer those
   if (hasHandX) {
     finalLeft = leftHandXCells;
     finalRight = rightHandXCells;
   }
 
-  // body mesh excluding arms/feet if enabled（手の X は最初から body に入れていない）
+  // Body mesh excluding arm/foot cells (hands marked with 'X' were never in body)
   const key = (r: number, c: number) => `${r}:${c}`;
   const armCellsSet = new Set<string>();
   for (const p of finalLeft) armCellsSet.add(key(p.row, p.col));
