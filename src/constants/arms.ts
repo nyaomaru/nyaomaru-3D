@@ -15,11 +15,13 @@ export const ARM_SWING_SPEED = 0.007;
 export const ARM_SWING_DASH_MULT = 1.4;
 
 export const ENABLE_ARM_SWING = false;
+export const ARM_SWING_Z_MULT = 0.25; // forearm outward roll factor
 
 // Punch settings
 export const PUNCH_ANGLE = 0.9; // radians, max forward extension
 export const PUNCH_DURATION = 0.25; // seconds, out+back total time
 export const PUNCH_COOLDOWN = 0.15; // seconds between punches
+export const PUNCH_HALF_PHASE = 0.5; // normalized half phase for out/back split
 
 // How many outermost columns per row count as arm voxels
 // Width-based edge trimming is disabled to avoid losing pixels

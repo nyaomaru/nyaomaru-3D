@@ -91,14 +91,7 @@ function buildLimbGroup(
   return group;
 }
 
-function selectHandOnly(cells: ArmCell[], perSide: number): ArmCell[] {
-  if (cells.length <= perSide) return cells;
-  const sorted = [...cells].sort((a, b) => {
-    if (a.row !== b.row) return b.row - a.row; // prefer lower rows (hands)
-    return a.colDelta - b.colDelta; // prefer closer to edge
-  });
-  return sorted.slice(0, perSide);
-}
+// (removed) selectHandOnly helper was unused under strict noUnusedLocals
 
 export function useAvatar(
   player: THREE.Group,

@@ -54,21 +54,23 @@ export function useEnvironment(
     const angleRad = Math.random() * Math.PI * 2;
     const mountainScale =
       C.MOUNTAIN_SCALE_MIN + Math.random() * C.MOUNTAIN_SCALE_RANGE;
-    const mountain = new THREE.Mesh(mountainGeometry, mountainMaterial.clone());
-    addToDispose(mountain.material);
+    const mountainMesh = new THREE.Mesh(mountainGeometry, mountainMaterial.clone());
+    addToDispose(mountainMesh.material);
+    mountainMesh.scale.setScalar(mountainScale);
+    const mountain = new THREE.Group();
+    mountain.add(mountainMesh);
     mountain.position.set(
       Math.cos(angleRad) * distanceFromOrigin,
       3 * mountainScale,
       Math.sin(angleRad) * distanceFromOrigin
     );
-    mountain.scale.setScalar(mountainScale);
     scene.add(mountain);
     // Add a slightly generous collider to prevent grazing through edges
     const collider: Collider = { x: mountain.position.x, z: mountain.position.z, r: 3 * mountainScale * 1.05 };
     colliders.push(collider);
     const mbbox = new THREE.Box3().setFromObject(mountain);
     mountains.push({
-      id: 5000 + index,
+      id: C.MOUNTAIN_ID_BASE + index,
       group: mountain,
       x: mountain.position.x,
       y: mountain.position.y,
