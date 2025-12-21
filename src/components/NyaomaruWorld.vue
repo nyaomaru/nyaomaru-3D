@@ -2,6 +2,7 @@
 import { onMounted, onBeforeUnmount, ref } from 'vue';
 import * as THREE from 'three';
 import * as C from '../constants';
+import { isDisposable } from '../utils/is';
 import { normalizeAngle, clamp } from '../utils';
 import type { Collider, Destructible, ShatterFragment } from '../types';
 import { useEnvironment } from '../composables/useEnvironment';
@@ -27,7 +28,7 @@ let rightFootGroup: THREE.Group | null = null;
 let isPunching = false;
 let punchTimer = 0;
 let punchCooldown = 0;
-let punchHand: 'left' | 'right' = 'right';
+let punchHand: C.Hand = C.HAND.RIGHT;
 
 // Mouse look
 let pitch = C.INITIAL_PITCH;
@@ -145,11 +146,11 @@ function applyJumpTakeoffMomentum(forward: number, speed: number) {
  * @returns void
  */
 function setPunchArmPose(angle: number) {
-  if (punchHand === 'left' && armLeftGroup) {
+  if (punchHand === C.HAND.LEFT && armLeftGroup) {
     armLeftGroup.rotation.x = -angle;
     armLeftGroup.rotation.z = 0;
   }
-  if (punchHand === 'right' && armRightGroup) {
+  if (punchHand === C.HAND.RIGHT && armRightGroup) {
     armRightGroup.rotation.x = -angle;
     armRightGroup.rotation.z = 0;
   }
@@ -315,7 +316,7 @@ function updatePlayer(deltaSeconds: number) {
       isPunching = false;
       punchTimer = 0;
       punchCooldown = C.PUNCH_COOLDOWN;
-      punchHand = punchHand === 'left' ? 'right' : 'left';
+      punchHand = punchHand === C.HAND.LEFT ? C.HAND.RIGHT : C.HAND.LEFT;
       punchDidHit = false;
     }
   } else {
@@ -458,6 +459,15 @@ function ensureFragmentResources() {
   }
 }
 
+function getFragmentResources(): {
+  geometry: THREE.BufferGeometry;
+  material: THREE.Material;
+} | null {
+  ensureFragmentResources();
+  if (!fragmentGeometry || !fragmentMaterial) return null;
+  return { geometry: fragmentGeometry, material: fragmentMaterial };
+}
+
 /**
  * Remove a destructible from the scene, spawn fragments, and remove from list.
  * @param list List of destructibles containing the target
@@ -488,8 +498,10 @@ function shatterDestructible(list: Destructible[], index: number) {
   const fragmentCount = isMountain
     ? Math.floor(baseCount * C.SHATTER_MOUNTAIN_COUNT_MULT)
     : baseCount;
+  const frags = getFragmentResources();
+  if (!frags) return;
   for (let i = 0; i < fragmentCount; i += 1) {
-    const mesh = new THREE.Mesh(fragmentGeometry!, fragmentMaterial!);
+    const mesh = new THREE.Mesh(frags.geometry, frags.material);
     mesh.position.copy(origin);
     if (isMountain) mesh.scale.setScalar(C.SHATTER_MOUNTAIN_FRAGMENT_SCALE);
     scene.add(mesh);
@@ -672,7 +684,8 @@ function willCollide(nextX: number, nextZ: number) {
 }
 
 onMounted(() => {
-  const containerElement = container.value!;
+  const containerElement = container.value;
+  if (!containerElement) return;
   const width = containerElement.clientWidth || window.innerWidth;
   const height = containerElement.clientHeight || window.innerHeight;
 
@@ -721,16 +734,8 @@ onBeforeUnmount(() => {
   stopAnimation();
   try {
     renderer?.dispose();
-    const hasDispose = (o: unknown): o is { dispose: () => void } => {
-      return (
-        typeof o === 'object' &&
-        o !== null &&
-        'dispose' in o &&
-        typeof (o as Record<string, unknown>).dispose === 'function'
-      );
-    };
     for (const res of toDispose) {
-      if (hasDispose(res)) res.dispose();
+      if (isDisposable(res)) res.dispose();
     }
   } catch {}
 });

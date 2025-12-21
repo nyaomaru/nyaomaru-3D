@@ -30,6 +30,9 @@ importers:
       '@vue/tsconfig':
         specifier: ^0.8.1
         version: 0.8.1(typescript@5.9.3)(vue@3.5.22(typescript@5.9.3))
+      is-kit:
+        specifier: ^1.1.6
+        version: 1.1.6
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
@@ -295,6 +298,9 @@ packages:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
+
+  is-kit@1.1.6:
+    resolution: {integrity: sha512-Ke0L03b2a/ARhYwY+7I3Ls48YhjVDQf7YvExJbEpvmlX5dUZp586IEoyJS2sz7FaIwyft7V9GZFKUk8Wdl35uw==}
 
   lightningcss-android-arm64@1.30.2:
     resolution: {integrity: sha512-BH9sEdOCahSgmkVhBLeU7Hc9DWeZ1Eb6wNS6Da8igvUwAe0sqROHddIlvU06q3WyXVEOYDZ6ykBZQnjTbmo4+A==}
@@ -708,6 +714,8 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  is-kit@1.1.6: {}
 
   lightningcss-android-arm64@1.30.2:
     optional: true

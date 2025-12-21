@@ -17,6 +17,7 @@
     "@types/three": "^0.180.0",
     "@vitejs/plugin-vue": "^6.0.1",
     "@vue/tsconfig": "^0.8.1",
+    "is-kit": "^1.1.6",
     "typescript": "~5.9.3",
     "vite": "npm:rolldown-vite@7.1.14",
     "vue-tsc": "^3.1.0"
