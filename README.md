@@ -22,3 +22,11 @@ pnpm dev
 ```
 
 Starts Vite dev server with HMR on http://localhost:5173
+
+## Action
+
+|key|action|
+|---|---|
+|space|jump|
+|z|punch and open door|
+|click|change viewpoint|
