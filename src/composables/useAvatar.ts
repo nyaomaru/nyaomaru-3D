@@ -33,6 +33,8 @@ function buildBodyMesh(
 ) {
   const dummy = new THREE.Object3D();
   const mesh = new THREE.InstancedMesh(geometry, material, cells.length * depth);
+  // Prevent incorrect culling for widely spread instances (helps mirrors)
+  mesh.frustumCulled = false;
   let idx = 0;
   for (const cell of cells) {
     for (let k = 0; k < depth; k += 1) {
@@ -75,6 +77,8 @@ function buildLimbGroup(
   group.position.set(pivotX, pivotY, 0);
   const dummy = new THREE.Object3D();
   const mesh = new THREE.InstancedMesh(geometry, material, cells.length * depth);
+  // Prevent incorrect culling for widely spread instances (helps mirrors)
+  mesh.frustumCulled = false;
   let idx = 0;
   for (const cell of cells) {
     for (let k = 0; k < depth; k += 1) {
@@ -377,6 +381,8 @@ export function useAvatar(
       voxelMaterial,
       cells.length * DEPTH
     );
+    // Prevent incorrect culling for widely spread instances (helps mirrors)
+    mesh.frustumCulled = false;
     let idx = 0;
     for (const cell of cells) {
       for (let k = 0; k < DEPTH; k += 1) {
