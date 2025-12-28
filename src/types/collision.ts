@@ -1,2 +1,9 @@
-export type Collider = { x: number; z: number; r: number };
-
+export type Collider = {
+  x: number;
+  z: number;
+  r: number;
+  // Optional max blocking height. When the player's Y is above this
+  // height (minus a small clearance), collisions against this collider
+  // are ignored to allow passing over it (e.g., house walls when on roof).
+  maxBlockY?: number;
+};

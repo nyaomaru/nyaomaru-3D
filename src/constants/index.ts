@@ -8,3 +8,4 @@ export * from './legs';
 export * from './pattern';
 export * from './environment';
 export * from './hand';
+export * from './house';

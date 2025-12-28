@@ -7,6 +7,7 @@ import { normalizeAngle, clamp } from '../utils';
 import type { Collider, Destructible, ShatterFragment } from '../types';
 import { useEnvironment } from '../composables/useEnvironment';
 import { useAvatar } from '../composables/useAvatar';
+import { useHouse } from '../composables/useHouse';
 
 const container = ref<HTMLDivElement | null>(null);
 
@@ -19,6 +20,10 @@ let animationFrameId = 0;
 const player = new THREE.Group();
 const lookAtOffset = new THREE.Vector3(0, 1.0, 0);
 const moveDir = new THREE.Vector3();
+const tmpVecA = new THREE.Vector3();
+const tmpVecB = new THREE.Vector3();
+const tmpVecC = new THREE.Vector3();
+const tmpTarget = new THREE.Vector3();
 let armLeftGroup: THREE.Group | null = null;
 let armRightGroup: THREE.Group | null = null;
 let leftFootGroup: THREE.Group | null = null;
@@ -51,6 +56,63 @@ const mountains: Destructible[] = [];
 let fragmentGeometry: THREE.BufferGeometry | null = null;
 let fragmentMaterial: THREE.Material | null = null;
 let punchDidHit = false;
+
+// House
+let houseDoorHinge: THREE.Group | null = null;
+let houseDoorCollider: Collider | null = null;
+let houseDoorOpen = false;
+
+// Camera mode
+const FIRST_PERSON_EYE_BACK_OFFSET = 0.05; // slight pull-back to avoid clipping
+let firstPersonActive = false;
+
+/**
+ * Toggle first-person camera mode state.
+ * @param active Whether first-person mode is active
+ * @returns void
+ */
+function setFirstPersonActive(active: boolean) {
+  if (firstPersonActive === active) return;
+  firstPersonActive = active;
+  // Keep avatar visible so mirrors can reflect the player.
+  // If self-visibility becomes an issue, we can hide only specific parts
+  // or switch to camera layer-based culling instead of global visibility.
+}
+
+/**
+ * Assign a render layer to an object and all descendants.
+ * @param obj Root object to assign
+ * @param layer Layer index
+ * @returns void
+ */
+function setLayersRecursive(obj: THREE.Object3D, layer: number) {
+  obj.layers.set(layer);
+  obj.traverse((child) => child.layers.set(layer));
+}
+
+/**
+ * Convert world XZ to house-local XZ.
+ * @param wx World X
+ * @param wz World Z
+ * @returns Local XZ object
+ */
+function getHouseLocalXZ(wx: number, wz: number) {
+  return {
+    x: wx - C.HOUSE_POSITION.x,
+    z: wz - C.HOUSE_POSITION.z,
+  };
+}
+
+function isPlayerInsideHouse(): boolean {
+  // Determine if player's XZ is within inner house bounds
+  const { x: localX, z: localZ } = getHouseLocalXZ(
+    player.position.x,
+    player.position.z
+  );
+  const halfW = C.HOUSE_WIDTH / 2 - C.HOUSE_WALL_THICKNESS * 0.5;
+  const halfD = C.HOUSE_DEPTH / 2 - C.HOUSE_WALL_THICKNESS * 0.5;
+  return localX > -halfW && localX < halfW && localZ > -halfD && localZ < halfD;
+}
 
 // Resources for disposal
 type DisposableResource =
@@ -99,6 +161,47 @@ function xzDistanceSquared(x1: number, z1: number, x2: number, z2: number) {
 }
 
 /**
+ * Return the ground height at a given XZ location, considering
+ * special platforms like the house step and roof.
+ */
+function getGroundHeight(px: number, pz: number): number {
+  let groundY = C.GROUND_Y;
+  // Step top region (world space rectangle)
+  const stepCenterX = C.HOUSE_POSITION.x + C.HOUSE_STEP_LOCAL_X;
+  const stepCenterZ = C.HOUSE_POSITION.z + C.HOUSE_STEP_LOCAL_Z;
+  const halfStepW = C.HOUSE_STEP_WIDTH / 2;
+  const halfStepD = C.HOUSE_STEP_DEPTH / 2;
+  if (
+    px >= stepCenterX - halfStepW &&
+    px <= stepCenterX + halfStepW &&
+    pz >= stepCenterZ - halfStepD &&
+    pz <= stepCenterZ + halfStepD
+  ) {
+    groundY = Math.max(groundY, C.HOUSE_STEP_HEIGHT);
+  }
+  // Roof top region (world space rectangle)
+  const { x: localX, z: localZ } = getHouseLocalXZ(px, pz);
+  const roofHalfW = (C.HOUSE_WIDTH + C.HOUSE_ROOF_OVERHANG) / 2;
+  const roofHalfD = (C.HOUSE_DEPTH + C.HOUSE_ROOF_OVERHANG) / 2;
+  if (
+    localX > -roofHalfW &&
+    localX < roofHalfW &&
+    localZ > -roofHalfD &&
+    localZ < roofHalfD
+  ) {
+    // Only consider roof as ground when the player is already
+    // above the wall height, to avoid warping upward while indoors.
+    if (
+      player.position.y >
+      C.HOUSE_WALL_HEIGHT - C.COLLISION_VERTICAL_CLEARANCE
+    ) {
+      groundY = Math.max(groundY, C.HOUSE_ROOF_TOP_Y);
+    }
+  }
+  return groundY;
+}
+
+/**
  * Update player XZ position if the move does not collide.
  * @param nextX Next X coordinate
  * @param nextZ Next Z coordinate
@@ -134,7 +237,7 @@ function applyJumpTakeoffMomentum(forward: number, speed: number) {
     airMoveVec
       .set(0, 0, -1)
       .applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYaw);
-    airMoveVec.multiplyScalar(speed * forward);
+    airMoveVec.multiplyScalar(speed * forward * C.AIR_TAKEOFF_SPEED_MULT);
   } else {
     airMoveVec.set(0, 0, 0);
   }
@@ -217,6 +320,19 @@ function buildEnvironment() {
 }
 
 /**
+ * Build a large house with a hinged door and add its colliders.
+ */
+function buildHouse() {
+  if (!scene) return;
+  const h = useHouse(scene, addToDispose);
+  houseDoorHinge = h.doorHinge;
+  houseDoorCollider = h.doorCollider;
+  houseDoorOpen = false;
+  colliders.push(...h.wallColliders);
+  if (houseDoorCollider) colliders.push(houseDoorCollider);
+}
+
+/**
  * Build the player avatar (body/arms/feet) and store references.
  * @returns void
  */
@@ -267,12 +383,23 @@ function updatePlayer(deltaSeconds: number) {
       movePlayerIfNoCollision(nextX, nextZ);
     }
   } else {
-    // mid-air: apply preserved momentum only; ignore new input
+    // mid-air: apply preserved momentum and allow small steering input
+    let nextX = player.position.x;
+    let nextZ = player.position.z;
     if (airMoveVec.lengthSq() > 0) {
-      const nextX = player.position.x + airMoveVec.x * deltaSeconds;
-      const nextZ = player.position.z + airMoveVec.z * deltaSeconds;
-      movePlayerIfNoCollision(nextX, nextZ);
+      nextX += airMoveVec.x * deltaSeconds;
+      nextZ += airMoveVec.z * deltaSeconds;
     }
+    if (forward !== 0) {
+      const steer = tmpVecA
+        .set(0, 0, -1)
+        .applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYaw);
+      const airDist =
+        forward * (C.MOVE_SPEED * C.AIR_CONTROL_MULT) * deltaSeconds;
+      nextX += steer.x * airDist;
+      nextZ += steer.z * airDist;
+    }
+    movePlayerIfNoCollision(nextX, nextZ);
   }
 
   if (isGrounded && C.KEYS_JUMP.some((k) => keys.has(k))) {
@@ -283,8 +410,9 @@ function updatePlayer(deltaSeconds: number) {
   }
   verticalVelocity -= C.GRAVITY * deltaSeconds;
   player.position.y += verticalVelocity * deltaSeconds;
-  if (player.position.y < C.GROUND_Y) {
-    player.position.y = C.GROUND_Y;
+  const groundY = getGroundHeight(player.position.x, player.position.z);
+  if (player.position.y < groundY) {
+    player.position.y = groundY;
     verticalVelocity = 0;
     isGrounded = true;
     airMoveVec.set(0, 0, 0);
@@ -360,17 +488,44 @@ function updatePlayer(deltaSeconds: number) {
  */
 function updateCamera() {
   if (!camera) return;
+  const inside = isPlayerInsideHouse();
+  const target = tmpTarget.copy(player.position).add(lookAtOffset);
+
+  if (inside) {
+    // First-person-style view when inside the house
+    setFirstPersonActive(true);
+    // Hide player layer for main camera in first-person
+    camera.layers.disable(C.PLAYER_LAYER);
+    const dir = tmpVecB
+      .set(0, 0, -1)
+      .applyAxisAngle(new THREE.Vector3(1, 0, 0), pitch)
+      .applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYaw)
+      .normalize();
+    const eye = tmpVecC.copy(target);
+    const camPos = tmpVecA
+      .copy(eye)
+      .addScaledVector(dir, -FIRST_PERSON_EYE_BACK_OFFSET);
+    const look = tmpVecC.addScaledVector(dir, 1.0);
+    camera.position.copy(camPos);
+    camera.lookAt(look);
+    return;
+  }
+
+  // Third-person camera outside
+  setFirstPersonActive(false);
+  // Show player layer for main camera in third-person
+  camera.layers.enable(C.PLAYER_LAYER);
   const distance = C.CAMERA_DISTANCE;
-  const target = new THREE.Vector3().copy(player.position).add(lookAtOffset);
-  const fwd = new THREE.Vector3(0, 0, -1)
+  const fwd = tmpVecB
+    .set(0, 0, -1)
     .applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYaw)
     .normalize();
   const horizontal = distance * Math.cos(pitch);
   const offY = distance * Math.sin(pitch);
-  const pos = new THREE.Vector3()
+  const pos = tmpVecC
     .copy(target)
     .addScaledVector(fwd, -horizontal)
-    .add(new THREE.Vector3(0, offY, 0));
+    .add(tmpVecA.set(0, offY, 0));
   camera.position.copy(pos);
   camera.lookAt(target);
 }
@@ -417,9 +572,9 @@ function getPlayerForward(out: THREE.Vector3) {
  */
 function attemptPunchHit() {
   if (!scene) return;
-  const fwd = new THREE.Vector3();
+  const fwd = tmpVecA;
   getPlayerForward(fwd);
-  const fist = new THREE.Vector3().copy(player.position);
+  const fist = tmpVecB.copy(player.position);
   const lookAtY = lookAtOffset.y || 1.0;
   fist.y += lookAtY;
   fist.addScaledVector(fwd, C.PUNCH_REACH);
@@ -434,6 +589,24 @@ function attemptPunchHit() {
   const mountainHit = findHitIndex(mountains, fist.x, fist.z, radius);
   if (mountainHit >= 0) {
     applyDamage(mountains, mountainHit);
+    return;
+  }
+  // Open house door if punching near it
+  if (!houseDoorOpen && houseDoorCollider) {
+    const dx = fist.x - houseDoorCollider.x;
+    const dz = fist.z - houseDoorCollider.z;
+    const rr =
+      (houseDoorCollider.r + C.PUNCH_RADIUS) *
+      (houseDoorCollider.r + C.PUNCH_RADIUS);
+    if (dx * dx + dz * dz <= rr) {
+      if (houseDoorHinge) {
+        houseDoorHinge.rotation.y = -C.HOUSE_DOOR_OPEN_ANGLE;
+      }
+      houseDoorOpen = true;
+      // Remove door collider to allow passage
+      const idx = colliders.indexOf(houseDoorCollider);
+      if (idx !== -1) colliders.splice(idx, 1);
+    }
   }
 }
 
@@ -674,6 +847,13 @@ function willCollide(nextX: number, nextZ: number) {
       const topY = blockingTree.topY ?? Infinity;
       if (player.position.y > topY - clearance) continue;
     }
+    // Allow passing over colliders that only block up to a height (e.g., house walls)
+    if (
+      typeof c.maxBlockY === 'number' &&
+      player.position.y > c.maxBlockY - clearance
+    ) {
+      continue;
+    }
     if (
       xzDistanceSquared(nextX, nextZ, c.x, c.z) <
       (c.r + C.PLAYER_RADIUS) * (c.r + C.PLAYER_RADIUS)
@@ -698,6 +878,9 @@ onMounted(() => {
     C.CAMERA_FAR
   );
   camera.position.set(0, 2, 4);
+  // Start with showing player (third-person default outside)
+  camera.layers.enable(0);
+  camera.layers.enable(C.PLAYER_LAYER);
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(
@@ -708,7 +891,10 @@ onMounted(() => {
   canvasEl = renderer.domElement;
 
   buildEnvironment();
+  buildHouse();
   buildPlayer();
+  // Put the avatar on a dedicated layer so we can hide it in first-person
+  setLayersRecursive(player, C.PLAYER_LAYER);
   scene.add(player);
 
   window.addEventListener('resize', handleResize);
