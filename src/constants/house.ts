@@ -19,7 +19,7 @@ export const HOUSE_DOOR_OPEN_ANGLE = 1.45; // ~83 degrees
 // Collision sampling along walls
 export const HOUSE_WALL_COLLIDER_SPACING = 0.8;
 export const HOUSE_WALL_COLLIDER_RADIUS = 0.45;
-export const HOUSE_DOOR_COLLIDER_RADIUS = 1.1; // easier to interact/open
+export const HOUSE_DOOR_COLLIDER_RADIUS = 1.4; // easier to interact/open
 
 // Colors
 export const HOUSE_WALL_COLOR = 0xf0ead6; // light beige
@@ -30,10 +30,10 @@ export const HOUSE_ROOF_COLOR = 0x704214; // roof
 export const HOUSE_STEP_HEIGHT = HOUSE_WALL_HEIGHT * 0.5; // half the wall height
 export const HOUSE_STEP_WIDTH = Math.max(6, HOUSE_WIDTH * 0.5); // span across part of the face
 export const HOUSE_STEP_DEPTH = 2.0; // how far it sticks out
-// Place the step on the back face (positive Z side)
+// Place the step on the back face (negative Z side)
 export const HOUSE_STEP_LOCAL_X = 0; // centered on X
 // Position step center just outside the back wall outer surface
-export const HOUSE_STEP_LOCAL_Z = HOUSE_DEPTH / 2 + HOUSE_STEP_DEPTH / 2;
+export const HOUSE_STEP_LOCAL_Z = -HOUSE_DEPTH / 2 - HOUSE_STEP_DEPTH / 2;
 
 // Interior windows
 export const WINDOW_WIDTH = 3.2;

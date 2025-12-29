@@ -20,6 +20,19 @@ export function useEnvironment(
     const halfD = C.HOUSE_DEPTH / 2 - C.HOUSE_WALL_THICKNESS * 0.5;
     return localX > -halfW && localX < halfW && localZ > -halfD && localZ < halfD;
   };
+  const isInsidePoliceStationFootprint = (
+    worldX: number,
+    worldZ: number
+  ): boolean => {
+    const localX = worldX - C.POLICE_STATION_POSITION.x;
+    const localZ = worldZ - C.POLICE_STATION_POSITION.z;
+    const buffer = 1.5;
+    const halfW =
+      C.POLICE_STATION_WIDTH / 2 + C.POLICE_STATION_WALL_THICKNESS + buffer;
+    const halfD =
+      C.POLICE_STATION_DEPTH / 2 + C.POLICE_STATION_WALL_THICKNESS + buffer;
+    return localX > -halfW && localX < halfW && localZ > -halfD && localZ < halfD;
+  };
   const sampleTreePosition = (
     minRadius: number,
     radiusRange: number
@@ -33,7 +46,27 @@ export function useEnvironment(
       worldX = Math.cos(ang) * dist;
       worldZ = Math.sin(ang) * dist;
       attempts += 1;
-    } while (isInsideHouseInterior(worldX, worldZ) && attempts < 12);
+    } while (
+      (isInsideHouseInterior(worldX, worldZ) ||
+        isInsidePoliceStationFootprint(worldX, worldZ)) &&
+      attempts < 12
+    );
+    return { x: worldX, z: worldZ };
+  };
+  const sampleMountainPosition = (
+    minRadius: number,
+    radiusRange: number
+  ): { x: number; z: number } => {
+    let worldX = 0;
+    let worldZ = 0;
+    let attempts = 0;
+    do {
+      const distance = minRadius + Math.random() * radiusRange;
+      const angle = Math.random() * Math.PI * 2;
+      worldX = Math.cos(angle) * distance;
+      worldZ = Math.sin(angle) * distance;
+      attempts += 1;
+    } while (isInsidePoliceStationFootprint(worldX, worldZ) && attempts < 12);
     return { x: worldX, z: worldZ };
   };
 
@@ -74,9 +107,10 @@ export function useEnvironment(
     roughness: 0.9,
   });
   for (let index = 0; index < C.MOUNTAIN_COUNT; index += 1) {
-    const distanceFromOrigin =
-      C.MOUNTAIN_BASE_RADIUS_MIN + Math.random() * C.MOUNTAIN_BASE_RADIUS_RANGE;
-    const angleRad = Math.random() * Math.PI * 2;
+    const { x: mountainX, z: mountainZ } = sampleMountainPosition(
+      C.MOUNTAIN_BASE_RADIUS_MIN,
+      C.MOUNTAIN_BASE_RADIUS_RANGE
+    );
     const mountainScale =
       C.MOUNTAIN_SCALE_MIN + Math.random() * C.MOUNTAIN_SCALE_RANGE;
     const mountainMesh = new THREE.Mesh(mountainGeometry, mountainMaterial.clone());
@@ -85,9 +119,9 @@ export function useEnvironment(
     const mountain = new THREE.Group();
     mountain.add(mountainMesh);
     mountain.position.set(
-      Math.cos(angleRad) * distanceFromOrigin,
+      mountainX,
       3 * mountainScale,
-      Math.sin(angleRad) * distanceFromOrigin
+      mountainZ
     );
     scene.add(mountain);
     // Add a slightly generous collider to prevent grazing through edges

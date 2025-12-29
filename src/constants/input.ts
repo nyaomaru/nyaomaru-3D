@@ -11,3 +11,4 @@ export const KEYS_BACKWARD = ['s', 'ArrowDown'] as const;
 export const KEYS_SPRINT = ['Shift'] as const;
 export const KEYS_JUMP = [' ', 'Space'] as const;
 export const KEYS_PUNCH = ['z'] as const;
+export const KEYS_TALK = ['x'] as const;
