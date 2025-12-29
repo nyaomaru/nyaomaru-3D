@@ -8,6 +8,7 @@ import type { Collider, Destructible, ShatterFragment } from '../types';
 import { useEnvironment } from '../composables/useEnvironment';
 import { useAvatar } from '../composables/useAvatar';
 import { useHouse } from '../composables/useHouse';
+import { usePoliceStation } from '../composables/usePoliceStation';
 
 const container = ref<HTMLDivElement | null>(null);
 
@@ -23,7 +24,10 @@ const moveDir = new THREE.Vector3();
 const tmpVecA = new THREE.Vector3();
 const tmpVecB = new THREE.Vector3();
 const tmpVecC = new THREE.Vector3();
+const tmpVecD = new THREE.Vector3();
 const tmpTarget = new THREE.Vector3();
+const AXIS_Y = new THREE.Vector3(0, 1, 0);
+const AXIS_X = new THREE.Vector3(1, 0, 0);
 let armLeftGroup: THREE.Group | null = null;
 let armRightGroup: THREE.Group | null = null;
 let leftFootGroup: THREE.Group | null = null;
@@ -57,10 +61,30 @@ let fragmentGeometry: THREE.BufferGeometry | null = null;
 let fragmentMaterial: THREE.Material | null = null;
 let punchDidHit = false;
 
+// Bear (police station chief room)
+const bearAnchors: Array<{ anchor: THREE.Object3D; message: string }> = [];
+let activeBearAnchor: { anchor: THREE.Object3D; message: string } | null = null;
+let bearInteractRadius = 5.0;
+let bearTalkUntil = 0;
+const bearPromptVisible = ref(false);
+const bearBubbleVisible = ref(false);
+const bearBubbleText = ref('Hello');
+const bearBubbleStyle = ref<Record<string, string>>({});
+
 // House
 let houseDoorHinge: THREE.Group | null = null;
 let houseDoorCollider: Collider | null = null;
 let houseDoorOpen = false;
+
+type DoorState = {
+  hinge: THREE.Group;
+  collider: Collider;
+  openAngleMagnitude: number;
+  closedRotation: number;
+  interactRadius?: number;
+  open: boolean;
+};
+let policeStationDoors: DoorState[] = [];
 
 // Camera mode
 const FIRST_PERSON_EYE_BACK_OFFSET = 0.05; // slight pull-back to avoid clipping
@@ -103,6 +127,29 @@ function getHouseLocalXZ(wx: number, wz: number) {
   };
 }
 
+/**
+ * Convert world XZ to police-station-local XZ.
+ * @param wx World X
+ * @param wz World Z
+ * @returns Local XZ object
+ */
+function getPoliceStationLocalXZ(wx: number, wz: number) {
+  return {
+    x: wx - C.POLICE_STATION_POSITION.x,
+    z: wz - C.POLICE_STATION_POSITION.z,
+  };
+}
+
+/**
+ * Write a forward vector from yaw into `out`.
+ * @param out Vector to write into
+ * @param yaw Yaw in radians
+ * @returns The same vector passed in
+ */
+function setForwardFromYaw(out: THREE.Vector3, yaw: number) {
+  return out.set(0, 0, -1).applyAxisAngle(AXIS_Y, yaw).normalize();
+}
+
 function isPlayerInsideHouse(): boolean {
   // Determine if player's XZ is within inner house bounds
   const { x: localX, z: localZ } = getHouseLocalXZ(
@@ -112,6 +159,42 @@ function isPlayerInsideHouse(): boolean {
   const halfW = C.HOUSE_WIDTH / 2 - C.HOUSE_WALL_THICKNESS * 0.5;
   const halfD = C.HOUSE_DEPTH / 2 - C.HOUSE_WALL_THICKNESS * 0.5;
   return localX > -halfW && localX < halfW && localZ > -halfD && localZ < halfD;
+}
+
+function isPlayerInsidePoliceStation(): boolean {
+  const { x: localX, z: localZ } = getPoliceStationLocalXZ(
+    player.position.x,
+    player.position.z
+  );
+  const halfW =
+    C.POLICE_STATION_WIDTH / 2 - C.POLICE_STATION_WALL_THICKNESS * 0.5;
+  const halfD =
+    C.POLICE_STATION_DEPTH / 2 - C.POLICE_STATION_WALL_THICKNESS * 0.5;
+  if (localX <= -halfW || localX >= halfW || localZ <= -halfD || localZ >= halfD)
+    return false;
+  const maxY =
+    C.POLICE_STATION_FLOOR_COUNT * C.POLICE_STATION_FLOOR_HEIGHT;
+  return player.position.y >= 0 && player.position.y <= maxY;
+}
+
+function isPlayerOnRoof(): boolean {
+  const { x: localX, z: localZ } = getHouseLocalXZ(
+    player.position.x,
+    player.position.z
+  );
+  const roofHalfW = (C.HOUSE_WIDTH + C.HOUSE_ROOF_OVERHANG) / 2;
+  const roofHalfD = (C.HOUSE_DEPTH + C.HOUSE_ROOF_OVERHANG) / 2;
+  if (
+    localX <= -roofHalfW ||
+    localX >= roofHalfW ||
+    localZ <= -roofHalfD ||
+    localZ >= roofHalfD
+  )
+    return false;
+  return (
+    player.position.y >=
+    C.HOUSE_ROOF_TOP_Y - C.COLLISION_VERTICAL_CLEARANCE
+  );
 }
 
 // Resources for disposal
@@ -198,6 +281,65 @@ function getGroundHeight(px: number, pz: number): number {
       groundY = Math.max(groundY, C.HOUSE_ROOF_TOP_Y);
     }
   }
+
+  const { x: stationX, z: stationZ } = getPoliceStationLocalXZ(px, pz);
+  const stationHalfW = C.POLICE_STATION_WIDTH / 2;
+  const stationHalfD = C.POLICE_STATION_DEPTH / 2;
+  if (
+    stationX > -stationHalfW &&
+    stationX < stationHalfW &&
+    stationZ > -stationHalfD &&
+    stationZ < stationHalfD
+  ) {
+    const clearance = C.COLLISION_VERTICAL_CLEARANCE;
+    const stairStepHeight =
+      C.POLICE_STATION_FLOOR_HEIGHT / C.POLICE_STATION_STAIR_STEP_COUNT;
+    for (let floor = 1; floor < C.POLICE_STATION_FLOOR_COUNT; floor += 1) {
+      const floorY =
+        C.POLICE_STATION_FLOOR_HEIGHT * floor +
+        C.POLICE_STATION_FLOOR_THICKNESS;
+      if (player.position.y > floorY - stairStepHeight - clearance) {
+        groundY = Math.max(groundY, floorY);
+      }
+    }
+
+    const stairHalfW = C.POLICE_STATION_STAIR_WIDTH / 2 + 0.4;
+    const stairHalfD = C.POLICE_STATION_STAIR_DEPTH / 2 + 0.4;
+    const stairMinX = C.POLICE_STATION_STAIR_CENTER_X - stairHalfW;
+    const stairMaxX = C.POLICE_STATION_STAIR_CENTER_X + stairHalfW;
+    const stairMinZ = C.POLICE_STATION_STAIR_CENTER_Z - stairHalfD;
+    const stairMaxZ = C.POLICE_STATION_STAIR_CENTER_Z + stairHalfD;
+    if (
+      stationX >= stairMinX &&
+      stationX <= stairMaxX &&
+      stationZ >= stairMinZ &&
+      stationZ <= stairMaxZ
+    ) {
+      const stepCount = C.POLICE_STATION_STAIR_STEP_COUNT;
+      const stepDepth = C.POLICE_STATION_STAIR_DEPTH / stepCount;
+      const along = stationZ - stairMinZ;
+      const stepIndex = Math.min(
+        stepCount - 1,
+        Math.max(0, Math.floor(along / stepDepth))
+      );
+      const stepHeight = C.POLICE_STATION_FLOOR_HEIGHT / stepCount;
+      const flightCount = Math.min(
+        2,
+        Math.max(1, C.POLICE_STATION_FLOOR_COUNT - 1)
+      );
+      const flightIndex = Math.min(
+        flightCount - 1,
+        Math.max(
+          0,
+          Math.floor(
+            (player.position.y + clearance) / C.POLICE_STATION_FLOOR_HEIGHT
+          )
+        )
+      );
+      const baseY = C.POLICE_STATION_FLOOR_HEIGHT * flightIndex;
+      groundY = Math.max(groundY, baseY + (stepIndex + 1) * stepHeight);
+    }
+  }
   return groundY;
 }
 
@@ -220,7 +362,7 @@ function movePlayerIfNoCollision(nextX: number, nextZ: number) {
  * @returns Object with nextX and nextZ
  */
 function computeNextXZFromMoveDist(moveDist: number) {
-  moveDir.set(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYaw);
+  setForwardFromYaw(moveDir, playerYaw);
   const nextX = player.position.x + moveDir.x * moveDist;
   const nextZ = player.position.z + moveDir.z * moveDist;
   return { nextX, nextZ } as const;
@@ -234,9 +376,7 @@ function computeNextXZFromMoveDist(moveDist: number) {
  */
 function applyJumpTakeoffMomentum(forward: number, speed: number) {
   if (forward !== 0) {
-    airMoveVec
-      .set(0, 0, -1)
-      .applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYaw);
+    setForwardFromYaw(airMoveVec, playerYaw);
     airMoveVec.multiplyScalar(speed * forward * C.AIR_TAKEOFF_SPEED_MULT);
   } else {
     airMoveVec.set(0, 0, 0);
@@ -332,6 +472,26 @@ function buildHouse() {
   if (houseDoorCollider) colliders.push(houseDoorCollider);
 }
 
+function buildPoliceStation() {
+  if (!scene) return;
+  const station = usePoliceStation(scene, addToDispose);
+  colliders.push(...station.colliders);
+  bearAnchors.length = 0;
+  if (station.bearAnchors) bearAnchors.push(...station.bearAnchors);
+  bearInteractRadius = station.bearInteractRadius ?? bearInteractRadius;
+  policeStationDoors = station.doors.map((door) => ({
+    hinge: door.hinge,
+    collider: door.collider,
+    openAngleMagnitude: door.openAngleMagnitude,
+    closedRotation: door.closedRotation,
+    interactRadius: door.interactRadius,
+    open: false,
+  }));
+  for (const door of policeStationDoors) {
+    colliders.push(door.collider);
+  }
+}
+
 /**
  * Build the player avatar (body/arms/feet) and store references.
  * @returns void
@@ -391,9 +551,7 @@ function updatePlayer(deltaSeconds: number) {
       nextZ += airMoveVec.z * deltaSeconds;
     }
     if (forward !== 0) {
-      const steer = tmpVecA
-        .set(0, 0, -1)
-        .applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYaw);
+      const steer = setForwardFromYaw(tmpVecA, playerYaw);
       const airDist =
         forward * (C.MOVE_SPEED * C.AIR_CONTROL_MULT) * deltaSeconds;
       nextX += steer.x * airDist;
@@ -489,17 +647,19 @@ function updatePlayer(deltaSeconds: number) {
 function updateCamera() {
   if (!camera) return;
   const inside = isPlayerInsideHouse();
+  const insideStation = isPlayerInsidePoliceStation();
+  const onRoof = isPlayerOnRoof();
   const target = tmpTarget.copy(player.position).add(lookAtOffset);
 
-  if (inside) {
+  if ((inside && !onRoof) || insideStation) {
     // First-person-style view when inside the house
     setFirstPersonActive(true);
     // Hide player layer for main camera in first-person
     camera.layers.disable(C.PLAYER_LAYER);
     const dir = tmpVecB
       .set(0, 0, -1)
-      .applyAxisAngle(new THREE.Vector3(1, 0, 0), pitch)
-      .applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYaw)
+      .applyAxisAngle(AXIS_X, pitch)
+      .applyAxisAngle(AXIS_Y, playerYaw)
       .normalize();
     const eye = tmpVecC.copy(target);
     const camPos = tmpVecA
@@ -516,10 +676,7 @@ function updateCamera() {
   // Show player layer for main camera in third-person
   camera.layers.enable(C.PLAYER_LAYER);
   const distance = C.CAMERA_DISTANCE;
-  const fwd = tmpVecB
-    .set(0, 0, -1)
-    .applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYaw)
-    .normalize();
+  const fwd = setForwardFromYaw(tmpVecB, playerYaw);
   const horizontal = distance * Math.cos(pitch);
   const offY = distance * Math.sin(pitch);
   const pos = tmpVecC
@@ -528,6 +685,80 @@ function updateCamera() {
     .add(tmpVecA.set(0, offY, 0));
   camera.position.copy(pos);
   camera.lookAt(target);
+}
+
+function getNearbyBearAnchor(): { anchor: THREE.Object3D; message: string } | null {
+  if (bearAnchors.length === 0) return null;
+  let nearest: { anchor: THREE.Object3D; message: string } | null = null;
+  let nearestDist2 = Infinity;
+  for (const entry of bearAnchors) {
+    entry.anchor.getWorldPosition(tmpVecD);
+    const dist2 = xzDistanceSquared(
+      player.position.x,
+      player.position.z,
+      tmpVecD.x,
+      tmpVecD.z
+    );
+    if (dist2 < nearestDist2) {
+      nearestDist2 = dist2;
+      nearest = entry;
+    }
+  }
+  if (nearest && nearestDist2 <= bearInteractRadius * bearInteractRadius) {
+    return nearest;
+  }
+  return null;
+}
+
+function updateBearBubblePosition() {
+  if (!activeBearAnchor || !camera || !container.value) return;
+  activeBearAnchor.anchor.getWorldPosition(tmpVecD);
+  const projected = tmpVecA.copy(tmpVecD).project(camera);
+  const width = container.value.clientWidth || window.innerWidth;
+  const height = container.value.clientHeight || window.innerHeight;
+  const x = (projected.x * 0.5 + 0.5) * width;
+  const y = (-projected.y * 0.5 + 0.5) * height;
+  const inView =
+    projected.z >= -1 &&
+    projected.z <= 1 &&
+    projected.x >= -1 &&
+    projected.x <= 1 &&
+    projected.y >= -1 &&
+    projected.y <= 1;
+  bearBubbleStyle.value = {
+    transform: `translate(-50%, -100%) translate(${x}px, ${y}px)`,
+    opacity: inView ? '1' : '0',
+  };
+}
+
+function updateBearUI() {
+  if (bearAnchors.length === 0) {
+    bearPromptVisible.value = false;
+    bearBubbleVisible.value = false;
+    return;
+  }
+  const nearAnchor = getNearbyBearAnchor();
+  if (nearAnchor && activeBearAnchor?.anchor !== nearAnchor.anchor) {
+    activeBearAnchor = nearAnchor;
+    if (bearBubbleVisible.value) {
+      bearBubbleText.value = nearAnchor.message;
+      updateBearBubblePosition();
+    }
+  }
+  activeBearAnchor = nearAnchor;
+  const nearBear = Boolean(nearAnchor);
+  bearPromptVisible.value = nearBear;
+  if (!nearBear && bearBubbleVisible.value) {
+    bearBubbleVisible.value = false;
+    return;
+  }
+  if (bearBubbleVisible.value) {
+    if (performance.now() > bearTalkUntil) {
+      bearBubbleVisible.value = false;
+    } else {
+      updateBearBubblePosition();
+    }
+  }
 }
 
 /**
@@ -549,6 +780,7 @@ function animate() {
   updatePlayer(deltaSeconds);
   updateCamera();
   updateFragments(deltaSeconds);
+  updateBearUI();
   if (renderer && scene && camera) renderer.render(scene, camera);
   animationFrameId = requestAnimationFrame(animate);
 }
@@ -559,11 +791,39 @@ function animate() {
  * @returns The same vector passed in
  */
 function getPlayerForward(out: THREE.Vector3) {
-  out
-    .set(0, 0, -1)
-    .applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYaw)
-    .normalize();
+  setForwardFromYaw(out, playerYaw);
   return out;
+}
+
+function toggleDoorIfHit(door: DoorState, fist: THREE.Vector3) {
+  const dx = fist.x - door.collider.x;
+  const dz = fist.z - door.collider.z;
+  const hitRadius = door.interactRadius ?? door.collider.r;
+  const rr = (hitRadius + C.PUNCH_RADIUS) * (hitRadius + C.PUNCH_RADIUS);
+  if (dx * dx + dz * dz > rr) return false;
+  if (!door.open) {
+    const toPlayerX = player.position.x - door.collider.x;
+    const toPlayerZ = player.position.z - door.collider.z;
+    const normal = tmpVecA
+      .set(0, 0, 1)
+      .applyAxisAngle(AXIS_Y, door.closedRotation);
+    const dot = normal.x * toPlayerX + normal.z * toPlayerZ;
+    const openSign = dot >= 0 ? -1 : 1;
+    door.hinge.rotation.y =
+      door.closedRotation + openSign * door.openAngleMagnitude;
+    door.open = true;
+    const idx = colliders.indexOf(door.collider);
+    if (idx !== -1) colliders.splice(idx, 1);
+    return true;
+  }
+  const pdx = player.position.x - door.collider.x;
+  const pdz = player.position.z - door.collider.z;
+  const pr2 = (door.collider.r + C.PLAYER_RADIUS) * (door.collider.r + C.PLAYER_RADIUS);
+  if (pdx * pdx + pdz * pdz <= pr2) return false;
+  door.hinge.rotation.y = door.closedRotation;
+  door.open = false;
+  if (!colliders.includes(door.collider)) colliders.push(door.collider);
+  return true;
 }
 
 /**
@@ -591,14 +851,15 @@ function attemptPunchHit() {
     applyDamage(mountains, mountainHit);
     return;
   }
-  // Open house door if punching near it
-  if (!houseDoorOpen && houseDoorCollider) {
+  // Open/close house door if punching near it
+  if (houseDoorCollider) {
     const dx = fist.x - houseDoorCollider.x;
     const dz = fist.z - houseDoorCollider.z;
     const rr =
       (houseDoorCollider.r + C.PUNCH_RADIUS) *
       (houseDoorCollider.r + C.PUNCH_RADIUS);
-    if (dx * dx + dz * dz <= rr) {
+    const inRange = dx * dx + dz * dz <= rr;
+    if (!houseDoorOpen && inRange) {
       if (houseDoorHinge) {
         houseDoorHinge.rotation.y = -C.HOUSE_DOOR_OPEN_ANGLE;
       }
@@ -606,7 +867,27 @@ function attemptPunchHit() {
       // Remove door collider to allow passage
       const idx = colliders.indexOf(houseDoorCollider);
       if (idx !== -1) colliders.splice(idx, 1);
+    } else if (houseDoorOpen && inRange && isPlayerInsideHouse()) {
+      const pdx = player.position.x - houseDoorCollider.x;
+      const pdz = player.position.z - houseDoorCollider.z;
+      const pr2 =
+        (houseDoorCollider.r + C.PLAYER_RADIUS) *
+        (houseDoorCollider.r + C.PLAYER_RADIUS);
+      // Avoid closing the door when the player is in the doorway
+      if (pdx * pdx + pdz * pdz > pr2) {
+        if (houseDoorHinge) {
+          houseDoorHinge.rotation.y = 0;
+        }
+        houseDoorOpen = false;
+        if (!colliders.includes(houseDoorCollider)) {
+          colliders.push(houseDoorCollider);
+        }
+      }
     }
+  }
+
+  for (const door of policeStationDoors) {
+    if (toggleDoorIfHit(door, fist)) return;
   }
 }
 
@@ -790,6 +1071,16 @@ function onKeyDown(e: KeyboardEvent) {
       }
     }
   }
+  if ((C.KEYS_TALK as readonly string[]).includes(keyLower)) {
+    const nearAnchor = getNearbyBearAnchor();
+    if (nearAnchor) {
+      activeBearAnchor = nearAnchor;
+      bearBubbleText.value = nearAnchor.message;
+      bearBubbleVisible.value = true;
+      bearTalkUntil = performance.now() + 2200;
+      updateBearBubblePosition();
+    }
+  }
 }
 /**
  * Record key up.
@@ -855,6 +1146,12 @@ function willCollide(nextX: number, nextZ: number) {
       continue;
     }
     if (
+      typeof c.minBlockY === 'number' &&
+      player.position.y < c.minBlockY - clearance
+    ) {
+      continue;
+    }
+    if (
       xzDistanceSquared(nextX, nextZ, c.x, c.z) <
       (c.r + C.PLAYER_RADIUS) * (c.r + C.PLAYER_RADIUS)
     )
@@ -892,6 +1189,7 @@ onMounted(() => {
 
   buildEnvironment();
   buildHouse();
+  buildPoliceStation();
   buildPlayer();
   // Put the avatar on a dedicated layer so we can hide it in first-person
   setLayersRecursive(player, C.PLAYER_LAYER);
@@ -928,8 +1226,167 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div
-    ref="container"
-    style="width: 100%; height: 100vh; overflow: hidden"
-  ></div>
+  <div class="world-root">
+    <div
+      ref="container"
+      class="world-canvas"
+    ></div>
+    <div
+      v-if="bearBubbleVisible"
+      class="speech-bubble"
+      :style="bearBubbleStyle"
+    >
+      {{ bearBubbleText }}
+    </div>
+    <div
+      v-if="bearPromptVisible"
+      class="talk-prompt"
+    >
+      <span class="talk-key">x</span>
+      <span class="talk-sep">:</span>
+      <span class="talk-text">talk</span>
+    </div>
+    <div class="hud">
+      <div class="hud-mark">KEY MARK</div>
+      <div class="hud-line">
+        <span class="hud-key">space</span>
+        <span class="hud-sep">:</span>
+        <span class="hud-action">jump</span>
+      </div>
+      <div class="hud-line">
+        <span class="hud-key">z</span>
+        <span class="hud-sep">:</span>
+        <span class="hud-action">punch or open</span>
+      </div>
+      <div class="hud-line">
+        <span class="hud-key">x</span>
+        <span class="hud-sep">:</span>
+        <span class="hud-action">talk</span>
+      </div>
+    </div>
+  </div>
 </template>
+
+<style scoped>
+.world-root {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.world-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.hud {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  padding: 10px 12px;
+  background: rgba(15, 12, 8, 0.6);
+  color: #f7e7c2;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  border: 1px solid rgba(247, 231, 194, 0.35);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.hud-mark {
+  display: inline-block;
+  padding: 2px 6px;
+  margin-bottom: 6px;
+  font-weight: 700;
+  font-size: 11px;
+  background: rgba(247, 231, 194, 0.18);
+  border: 1px solid rgba(247, 231, 194, 0.5);
+}
+
+.hud-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hud-line + .hud-line {
+  margin-top: 4px;
+}
+
+.hud-key {
+  min-width: 36px;
+  padding: 2px 6px;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  text-align: center;
+  background: rgba(32, 28, 22, 0.8);
+  border: 1px solid rgba(247, 231, 194, 0.6);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.hud-sep {
+  opacity: 0.8;
+}
+
+.hud-action {
+  font-size: 11px;
+}
+
+.speech-bubble {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 2px solid rgba(25, 18, 12, 0.9);
+  background: #f6f1e4;
+  color: #2c1b10;
+  font-size: 13px;
+  letter-spacing: 0.2px;
+  box-shadow:
+    0 8px 16px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.talk-prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(18, 14, 10, 0.78);
+  color: #f7e7c2;
+  font-size: 12px;
+  text-transform: uppercase;
+  border: 1px solid rgba(247, 231, 194, 0.45);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.talk-key {
+  min-width: 20px;
+  padding: 2px 6px;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  text-align: center;
+  background: rgba(32, 28, 22, 0.9);
+  border: 1px solid rgba(247, 231, 194, 0.6);
+}
+
+.talk-sep {
+  opacity: 0.8;
+}
+
+.talk-text {
+  font-size: 11px;
+}
+</style>

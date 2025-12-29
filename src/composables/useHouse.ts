@@ -154,6 +154,7 @@ export function useHouse(
       metalness: tuning.glassMetalness,
       transparent: true,
       opacity: tuning.glassOpacity,
+      side: THREE.DoubleSide,
     }),
   };
   addToDispose(materials.wallMat);
@@ -163,31 +164,30 @@ export function useHouse(
 
   const dimensions: HouseDimensions = {
     wallY: C.HOUSE_WALL_HEIGHT / 2,
-    frontZ: -C.HOUSE_DEPTH / 2 + C.HOUSE_WALL_THICKNESS / 2,
-    sideZ: C.HOUSE_DEPTH / 2 - C.HOUSE_WALL_THICKNESS / 2,
+    frontZ: C.HOUSE_DEPTH / 2 - C.HOUSE_WALL_THICKNESS / 2,
+    sideZ: -C.HOUSE_DEPTH / 2 + C.HOUSE_WALL_THICKNESS / 2,
     sideX: C.HOUSE_WIDTH / 2 - C.HOUSE_WALL_THICKNESS / 2,
     segmentWidth: (C.HOUSE_WIDTH - C.HOUSE_DOOR_WIDTH) / 2,
   };
 
   const buildWallsAndRoof = () => {
+    const buildWallSegment = (
+      width: number,
+      height: number,
+      depth: number,
+      position: [number, number, number]
+    ) => {
+      const geo = new THREE.BoxGeometry(width, height, depth);
+      addToDispose(geo);
+      return createMesh(geo, materials.wallMat, { position });
+    };
+
     const frontLeftGeo = new THREE.BoxGeometry(
       dimensions.segmentWidth,
       C.HOUSE_WALL_HEIGHT,
       C.HOUSE_WALL_THICKNESS
     );
-    const backGeo = new THREE.BoxGeometry(
-      C.HOUSE_WIDTH,
-      C.HOUSE_WALL_HEIGHT,
-      C.HOUSE_WALL_THICKNESS
-    );
-    const sideGeo = new THREE.BoxGeometry(
-      C.HOUSE_WALL_THICKNESS,
-      C.HOUSE_WALL_HEIGHT,
-      C.HOUSE_DEPTH
-    );
     addToDispose(frontLeftGeo);
-    addToDispose(backGeo);
-    addToDispose(sideGeo);
 
     const frontLeft = createMesh(frontLeftGeo, materials.wallMat, {
       position: [
@@ -203,15 +203,118 @@ export function useHouse(
         dimensions.frontZ,
       ],
     });
-    const back = createMesh(backGeo, materials.wallMat, {
-      position: [0, dimensions.wallY, dimensions.sideZ],
-    });
-    const left = createMesh(sideGeo, materials.wallMat, {
-      position: [-dimensions.sideX, dimensions.wallY, 0],
-    });
-    const right = createMesh(sideGeo, materials.wallMat, {
-      position: [dimensions.sideX, dimensions.wallY, 0],
-    });
+
+    const windowBottom = C.WINDOW_SILL_Y;
+    const windowTop = C.WINDOW_SILL_Y + C.WINDOW_HEIGHT;
+    const windowCenterY = windowBottom + C.WINDOW_HEIGHT / 2;
+    const topStripHeight = C.HOUSE_WALL_HEIGHT - windowTop;
+    const sideStripDepth = (C.HOUSE_DEPTH - C.WINDOW_WIDTH) / 2;
+    const backStripWidth = (C.HOUSE_WIDTH - C.WINDOW_WIDTH) / 2;
+
+    const back = [
+      buildWallSegment(
+        C.HOUSE_WIDTH,
+        windowBottom,
+        C.HOUSE_WALL_THICKNESS,
+        [0, windowBottom / 2, dimensions.sideZ]
+      ),
+      buildWallSegment(
+        C.HOUSE_WIDTH,
+        topStripHeight,
+        C.HOUSE_WALL_THICKNESS,
+        [0, windowTop + topStripHeight / 2, dimensions.sideZ]
+      ),
+      buildWallSegment(
+        backStripWidth,
+        C.WINDOW_HEIGHT,
+        C.HOUSE_WALL_THICKNESS,
+        [
+          -(C.WINDOW_WIDTH / 2 + backStripWidth / 2),
+          windowCenterY,
+          dimensions.sideZ,
+        ]
+      ),
+      buildWallSegment(
+        backStripWidth,
+        C.WINDOW_HEIGHT,
+        C.HOUSE_WALL_THICKNESS,
+        [
+          C.WINDOW_WIDTH / 2 + backStripWidth / 2,
+          windowCenterY,
+          dimensions.sideZ,
+        ]
+      ),
+    ];
+
+    const left = [
+      buildWallSegment(
+        C.HOUSE_WALL_THICKNESS,
+        windowBottom,
+        C.HOUSE_DEPTH,
+        [-dimensions.sideX, windowBottom / 2, 0]
+      ),
+      buildWallSegment(
+        C.HOUSE_WALL_THICKNESS,
+        topStripHeight,
+        C.HOUSE_DEPTH,
+        [-dimensions.sideX, windowTop + topStripHeight / 2, 0]
+      ),
+      buildWallSegment(
+        C.HOUSE_WALL_THICKNESS,
+        C.WINDOW_HEIGHT,
+        sideStripDepth,
+        [
+          -dimensions.sideX,
+          windowCenterY,
+          -(C.WINDOW_WIDTH / 2 + sideStripDepth / 2),
+        ]
+      ),
+      buildWallSegment(
+        C.HOUSE_WALL_THICKNESS,
+        C.WINDOW_HEIGHT,
+        sideStripDepth,
+        [
+          -dimensions.sideX,
+          windowCenterY,
+          C.WINDOW_WIDTH / 2 + sideStripDepth / 2,
+        ]
+      ),
+    ];
+
+    const right = [
+      buildWallSegment(
+        C.HOUSE_WALL_THICKNESS,
+        windowBottom,
+        C.HOUSE_DEPTH,
+        [dimensions.sideX, windowBottom / 2, 0]
+      ),
+      buildWallSegment(
+        C.HOUSE_WALL_THICKNESS,
+        topStripHeight,
+        C.HOUSE_DEPTH,
+        [dimensions.sideX, windowTop + topStripHeight / 2, 0]
+      ),
+      buildWallSegment(
+        C.HOUSE_WALL_THICKNESS,
+        C.WINDOW_HEIGHT,
+        sideStripDepth,
+        [
+          dimensions.sideX,
+          windowCenterY,
+          -(C.WINDOW_WIDTH / 2 + sideStripDepth / 2),
+        ]
+      ),
+      buildWallSegment(
+        C.HOUSE_WALL_THICKNESS,
+        C.WINDOW_HEIGHT,
+        sideStripDepth,
+        [
+          dimensions.sideX,
+          windowCenterY,
+          C.WINDOW_WIDTH / 2 + sideStripDepth / 2,
+        ]
+      ),
+    ];
 
     const roofGeo = new THREE.BoxGeometry(
       C.HOUSE_WIDTH + C.HOUSE_ROOF_OVERHANG,
@@ -224,7 +327,7 @@ export function useHouse(
       cloneMaterial: false,
     });
 
-    addToHouse(frontLeft, frontRight, back, left, right, roof);
+    addToHouse(frontLeft, frontRight, roof, ...back, ...left, ...right);
   };
 
   const buildStep = () => {
@@ -636,11 +739,13 @@ export function useHouse(
       });
     };
 
+    const furnBlockMaxY = C.HOUSE_WALL_HEIGHT;
     const pushFurnCol = (localX: number, localZ: number, r: number) => {
       worldColliders.push({
         x: localX + house.position.x,
         z: localZ + house.position.z,
         r,
+        maxBlockY: furnBlockMaxY,
       });
     };
 
@@ -691,6 +796,7 @@ export function useHouse(
       x: house.position.x,
       z: house.position.z + dimensions.frontZ,
       r: C.HOUSE_DOOR_COLLIDER_RADIUS,
+      maxBlockY: furnBlockMaxY,
     };
 
     return { worldColliders, doorCollider };
