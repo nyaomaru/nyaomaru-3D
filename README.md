@@ -29,4 +29,5 @@ Starts Vite dev server with HMR on http://localhost:5173
 |---|---|
 |space|jump|
 |z|punch and open door|
+|x|talk|
 |click|change viewpoint|
